@@ -1,0 +1,69 @@
+pipeline {
+    agent any
+
+    stages {
+        stage('Git_Checkout') {
+            steps {
+                script {
+                    sh """
+                        git clone https://github.com/vinay-3708/express.git
+                    """
+                    def GIT_COMMIT =  sh (script: 'cd express && git log --oneline -n 1 | awk -F \' \' \'{print $1}\'', returnStdout: true).trim()
+                    env.TAG = GIT_COMMIT
+                }
+            }
+        }
+        stage('ECR Logging') {
+            steps {
+                withCredentials([string(credentialsId: 'AWS_ID', variable: 'AWS_ID'), string(credentialsId: 'AWS_PASS', variable: 'AWS_PASS')]) {
+                    script {
+                        sh """
+                            echo ${env.TAG}
+                            export AWS_ACCESS_KEY_ID=${AWS_ID}
+                            export AWS_SECRET_ACCESS_KEY=${AWS_PASS}
+                            aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 834117679684.dkr.ecr.us-east-1.amazonaws.com
+                        """
+                    }
+                }
+            }
+        }
+        stage('Docker build & Push') {
+            steps {
+                withCredentials([string(credentialsId: 'AWS_ID', variable: 'AWS_ID'), string(credentialsId: 'AWS_PASS', variable: 'AWS_PASS')]) {
+                    script {
+                        sh """
+                            echo ${env.TAG}
+                            export AWS_ACCESS_KEY_ID=${AWS_ID}
+                            export AWS_SECRET_ACCESS_KEY=${AWS_PASS}
+                            cd express
+                            docker build -t 834117679684.dkr.ecr.us-east-1.amazonaws.com/expressjs-hello-world:${env.TAG} .
+                            docker push 834117679684.dkr.ecr.us-east-1.amazonaws.com/expressjs-hello-world:${env.TAG}
+                        """
+                    }
+                }
+            }
+        }
+        stage('Terraform_Deploy') {
+            steps {
+                withCredentials([string(credentialsId: 'AWS_ID', variable: 'AWS_ID'), string(credentialsId: 'AWS_PASS', variable: 'AWS_PASS')]) {
+                    script {
+                        sh """
+                            export AWS_ACCESS_KEY_ID=${AWS_ID}
+                            export AWS_SECRET_ACCESS_KEY=${AWS_PASS}
+                            cd express/terraform
+                            sed -i 's|TAG|${env.TAG}|g' variables.tf
+                            terraform init
+                            terraform plan
+                            terraform apply --auto-approve
+                        """
+                    }
+                }
+            }
+        }
+    }
+    post {
+        always {
+            cleanWs()
+        }
+    }
+}
